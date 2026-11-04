@@ -1,0 +1,42 @@
+# /etc/systemd/system/zoomriya-id.service
+# ZOOMRIYA ID: the sign-in every ZOOMRIYA app shares, behind the gateway at
+# /id/ (zoomriya-apps' platform/gateway/Caddyfile). Its own account (zoomriya-id), its own
+# database (zoomriya_id) and its own folder (/data/zoomriya-id: the signing
+# key and profile photos), which no app's container can see.
+# Installed by deploy/install.sh, or with ZOOMRIYA OS.
+[Unit]
+Description=ZOOMRIYA ID (sign-in for every ZOOMRIYA app)
+After=network-online.target postgresql.service redis-server.service valkey-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zoomriya-id
+Group=zoomriya-id
+EnvironmentFile=/etc/zoomriya/id.env
+WorkingDirectory=/opt/zoomriya/id/backend
+# Its own small schema, brought up to date before each start.
+ExecStartPre=/opt/zoomriya/id/venv/bin/alembic upgrade head
+# One worker: sign-in is light, and the sign-in limits are counted in-process.
+# The gateway passes the visitor's address on (X-Forwarded-For).
+ExecStart=/opt/zoomriya/id/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8050 \
+    --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=always
+MemoryMax=512M
+TimeoutStopSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+UMask=0077
+ReadWritePaths=/data/zoomriya-id
+
+[Install]
+WantedBy=multi-user.target
