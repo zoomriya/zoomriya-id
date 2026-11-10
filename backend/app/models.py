@@ -162,3 +162,32 @@ class ChildChange(Base):
     )
     what: Mapped[str] = mapped_column(String(300), nullable=False)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class Activity(Base):
+    """The family's activity, for admins (decision 28): sign-ins (and wrong
+    passwords), second steps, passwords, accounts and their apps, AI keys;
+    and what apps report: new devices, share links, setting changes. Kept 90
+    days (``app.activity``)."""
+
+    __tablename__ = "activity"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    # sign-in, sign-in-failed, second-step, password, account, ai-key, device,
+    # share-link, setting (app.activity.KINDS).
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    # Whose it is, and who did it (an admin, for an account change); either
+    # may be gone since (None), and a wrong password names no member.
+    member_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    by_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Plain words: "Signed in", "Turned on the second step", "Added a device: Pixel 8".
+    what: Mapped[str] = mapped_column(String(300), nullable=False)
+    # ZOOMRIYA ID, or the app that reported it (Family Photos…).
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The device's address on the home network (or through ZOOMRIYA Connect).
+    address: Mapped[str | None] = mapped_column(String(64), nullable=True)

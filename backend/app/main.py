@@ -17,6 +17,8 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 
 from app.config import settings
+from app.routes.activity import router as activity_router
+from app.routes.activity import users_router as activity_users_router
 from app.routes.ai_keys import router as ai_keys_router
 from app.routes.auth import router as auth_router
 from app.routes.second_step import router as second_step_router
@@ -84,6 +86,8 @@ api = APIRouter(prefix=settings.api_prefix)
 api.include_router(auth_router, prefix="/auth", tags=["auth"])
 api.include_router(ai_keys_router, prefix="/auth", tags=["ai keys"])
 api.include_router(second_step_router, prefix="/auth", tags=["second step"])
+api.include_router(activity_router, prefix="/auth", tags=["activity"])
+api.include_router(activity_users_router, prefix="/users", tags=["activity"])
 api.include_router(users_router, prefix="/users", tags=["users"])
 api.include_router(second_step_users_router, prefix="/users", tags=["second step"])
 

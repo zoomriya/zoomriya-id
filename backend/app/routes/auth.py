@@ -23,7 +23,7 @@ from zoomriya_identity import identity as id_format
 from zoomriya_identity import levels
 
 from app import accounts as identity
-from app import avatars, second_step
+from app import activity, avatars, second_step
 from app.config import settings
 from app.db import get_db
 from app.deps import (
@@ -82,9 +82,19 @@ class TokenResponse(BaseModel):
     expires_in: int
 
 
-def _checked_login(db: Session, username: str, password: str) -> User:
+def _checked_login(db: Session, username: str, password: str, request: Request) -> User:
     user = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
     if user is None or not verify_password(password, user.hashed_password) or not user.is_active:
+        # Admins see wrong passwords for a member; a name that isn't one is
+        # left out (never write down what someone typed by mistake).
+        if user is not None:
+            activity.record(
+                db,
+                activity.SIGN_IN_FAILED,
+                "Wrong password" if user.is_active else "Tried to sign in to a turned-off account",
+                member=user,
+                request=request,
+            )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     return user
 
@@ -92,10 +102,11 @@ def _checked_login(db: Session, username: str, password: str) -> User:
 @router.post("/login", response_model=TokenResponse)
 def login(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ) -> TokenResponse | JSONResponse:
-    user = _checked_login(db, payload.username, payload.password)
+    user = _checked_login(db, payload.username, payload.password, request)
     if user.password_temporary:
         # No token for a temporary password: they choose their own first.
         return JSONResponse(
@@ -111,19 +122,20 @@ def login(
         user.hashed_password = hash_password(payload.password)
         db.add(user)
         db.commit()
-    return _after_password(response, user, db)
+    return _after_password(response, user, db, request)
 
 
 @router.post("/login/new-password", response_model=TokenResponse)
 def login_with_new_password(
     payload: NewPasswordRequest,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     """The first sign-in after an admin set a temporary password: the
     temporary one, and the member's own, which replaces it. Rate-limited
     with ``/auth/login``."""
-    user = _checked_login(db, payload.username, payload.password)
+    user = _checked_login(db, payload.username, payload.password, request)
     if not user.password_temporary:
         raise HTTPException(status_code=400, detail="Sign in with your password")
     if payload.new_password == payload.password:
@@ -133,10 +145,13 @@ def login_with_new_password(
     db.add(user)
     db.commit()
     db.refresh(user)
-    return _after_password(response, user, db)
+    activity.record(db, activity.PASSWORD, "Chose their own password", member=user, request=request)
+    return _after_password(response, user, db, request)
 
 
-def _after_password(response: Response, user: User, db: Session) -> TokenResponse | JSONResponse:
+def _after_password(
+    response: Response, user: User, db: Session, request: Request
+) -> TokenResponse | JSONResponse:
     """The password was right: signed in, or the second step first."""
     if user.has_second_step:
         return _second_step_answer(
@@ -152,6 +167,7 @@ def _after_password(response: Response, user: User, db: Session) -> TokenRespons
             user,
             second_step.SETUP,
         )
+    activity.record(db, activity.SIGN_IN, "Signed in", member=user, request=request)
     return _issue_token(response, user, db, new_session=True)
 
 
@@ -428,6 +444,7 @@ def set_my_place(
 @router.post("/me/password", response_model=TokenResponse)
 def change_my_password(
     payload: PasswordChangeRequest,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -445,6 +462,9 @@ def change_my_password(
     db.commit()
     db.refresh(current_user)
     identity.publish(db, id_format.USER_REVOKED, current_user)
+    activity.record(
+        db, activity.PASSWORD, "Changed their password", member=current_user, request=request
+    )
     # The old session cookie carries the old version, so this one gets a new one.
     return _issue_token(response, current_user, db, new_session=True)
 

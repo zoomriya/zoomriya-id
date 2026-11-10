@@ -23,6 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import accounts as identity
+from app import activity
 from app.config import settings
 from app.db import get_db
 from app.deps import get_current_user
@@ -88,6 +89,7 @@ def make_key(
     )
     db.add(row)
     db.commit()
+    activity.record(db, activity.AI_KEY, f"Made an AI app key: {row.name}", member=user)
     return _view(row) | {"key": key}
 
 
@@ -98,8 +100,10 @@ def remove_key(
     row = db.get(AiKey, key_id)
     if row is None or row.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Key not found")
+    name = row.name
     db.delete(row)
     db.commit()
+    activity.record(db, activity.AI_KEY, f"Removed an AI app key: {name}", member=user)
     return Response(status_code=204)
 
 

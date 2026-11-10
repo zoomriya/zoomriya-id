@@ -20,6 +20,7 @@ from sqlalchemy import select
 from zoomriya_identity import identity as id_format
 
 from app import accounts as identity
+from app import activity
 from app.db import SessionLocal
 from app.models import ROLE_ADMIN, User
 from app.routes.users import MIN_PASSWORD_LENGTH
@@ -55,6 +56,13 @@ def recover_admin(username: str, password: str) -> bool:
         db.commit()
         db.refresh(user)
         identity.publish(db, id_format.USER_REVOKED, user)
+        activity.record(
+            db,
+            activity.PASSWORD,
+            "Let back in at the box with the setup code: a new password and a new second step",
+            member=user,
+            source="The box",
+        )
     return True
 
 

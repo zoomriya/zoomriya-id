@@ -23,7 +23,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import second_step
+from app import activity, second_step
 from app.db import get_db
 from app.deps import bearer_scheme, get_current_user, require_admin
 from app.models import ROLE_ADMIN, User
@@ -114,17 +114,32 @@ def _code_ok(user: User, code: str) -> bool:
 
 @router.post("/login/second-step", response_model=TokenResponse)
 def login_second_step(
-    payload: CodeRequest, response: Response, db: Session = Depends(get_db)
+    payload: CodeRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
 ) -> TokenResponse:
     """The second step after the password. Rate-limited with ``/auth/login``."""
     user = _ticket_user(db, payload.ticket, second_step.CHECK)
+    backups_before = len(user.second_step_backup or [])
     if not _code_ok(user, payload.code):
+        activity.record(
+            db, activity.SIGN_IN_FAILED, "Wrong second-step code", member=user, request=request
+        )
         # 400, not 401: the page keeps the ticket and asks again; 401 means
         # the ticket ran out and signing in starts again.
         raise HTTPException(status_code=400, detail=WRONG_CODE)
     db.add(user)
     db.commit()
     db.refresh(user)
+    used_backup = len(user.second_step_backup or []) < backups_before
+    activity.record(
+        db,
+        activity.SIGN_IN,
+        "Signed in with a backup code" if used_backup else "Signed in",
+        member=user,
+        request=request,
+    )
     return _issue_token(response, user, db, new_session=True)
 
 
@@ -164,6 +179,7 @@ def setup_finish(
     """The first code from the app: the second step is on. The backup codes are
     in the answer, and nowhere else, ever."""
     user, from_ticket = _who(db, request, credentials, payload.ticket)
+    moved = user.has_second_step
     if user.second_step_pending is None:
         raise HTTPException(status_code=400, detail="Start again: scan the new QR code first.")
     secret = second_step.unseal(user.second_step_pending, user.id)
@@ -182,8 +198,16 @@ def setup_finish(
     db.add(user)
     db.commit()
     db.refresh(user)
+    activity.record(
+        db,
+        activity.SECOND_STEP,
+        "Moved the second step to a new phone" if moved else "Turned on the second step",
+        member=user,
+        request=request,
+    )
     answer: dict[str, object] = {"backup_codes": shown}
     if from_ticket:
+        activity.record(db, activity.SIGN_IN, "Signed in", member=user, request=request)
         answer.update(_issue_token(response, user, db, new_session=True).model_dump())
     return answer
 
@@ -191,6 +215,7 @@ def setup_finish(
 @router.post("/me/second-step/backup-codes")
 def new_backup_codes(
     payload: PasswordRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, list[str]]:
@@ -202,12 +227,16 @@ def new_backup_codes(
     current_user.second_step_backup = kept
     db.add(current_user)
     db.commit()
+    activity.record(
+        db, activity.SECOND_STEP, "Made new backup codes", member=current_user, request=request
+    )
     return {"backup_codes": shown}
 
 
 @router.post("/me/second-step/off", status_code=204)
 def turn_off(
     payload: OffRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
@@ -220,6 +249,9 @@ def turn_off(
     _clear(current_user)
     db.add(current_user)
     db.commit()
+    activity.record(
+        db, activity.SECOND_STEP, "Turned off the second step", member=current_user, request=request
+    )
     return Response(status_code=204)
 
 
@@ -238,6 +270,7 @@ def confirm_password(
 @users_router.post("/{user_id}/second-step/reset", status_code=204)
 def reset_for(
     user_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> Response:
@@ -251,6 +284,14 @@ def reset_for(
     _clear(user)
     db.add(user)
     db.commit()
+    activity.record(
+        db,
+        activity.SECOND_STEP,
+        "Second step reset by an admin",
+        member=user,
+        by=admin,
+        request=request,
+    )
     return Response(status_code=204)
 
 

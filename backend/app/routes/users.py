@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -32,7 +32,7 @@ from zoomriya_identity import identity as id_format
 from zoomriya_identity import levels, quiet_hours
 
 from app import accounts as identity
-from app import avatars
+from app import activity, avatars
 from app.db import get_db
 from app.deps import get_current_user, require_admin
 from app.models import ROLE_ADMIN, ROLE_FAMILY, User
@@ -428,8 +428,9 @@ def note_child_change(
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreateRequest,
+    request: Request,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ) -> dict[str, object]:
     username = payload.username.strip()
     if not username or any(char.isspace() for char in username):
@@ -459,6 +460,14 @@ def create_user(
     db.commit()
     db.refresh(user)
     identity.publish(db, id_format.USER_CREATED, user)
+    activity.record(
+        db,
+        activity.ACCOUNT,
+        "Added to the family" + (" as a child" if is_child else ""),
+        member=user,
+        by=admin,
+        request=request,
+    )
     return serialize_user(user, db)
 
 
@@ -466,12 +475,15 @@ def create_user(
 def update_user(
     user_id: int,
     payload: UserUpdateRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> dict[str, object]:
     user = _get_user(db, user_id)
     provided = payload.model_fields_set
     was_active, old_version = user.is_active, user.token_version
+    was_role = user.role
+    password_set = "password" in provided and payload.password is not None
 
     if "display_name" in provided:
         user.display_name = (payload.display_name or "").strip() or None
@@ -533,6 +545,24 @@ def update_user(
     else:
         event = id_format.USER_UPDATED
     identity.publish(db, event, user)
+    changes = []
+    if user.role != was_role:
+        changes.append("Made an admin" if user.role == ROLE_ADMIN else "No longer an admin")
+    if user.is_active != was_active:
+        changes.append("Account turned on" if user.is_active else "Account turned off")
+    for what in changes:
+        activity.record(db, activity.ACCOUNT, what, member=user, by=current_user, request=request)
+    if password_set:
+        activity.record(
+            db,
+            activity.PASSWORD,
+            "Changed their password"
+            if user.id == current_user.id
+            else "Password reset by an admin",
+            member=user,
+            by=current_user,
+            request=request,
+        )
     if was_active != user.is_active:
         # A guardian turned off or on: their children's guardians changed.
         for child in identity.children_of(db, user):
@@ -558,6 +588,7 @@ def get_user_apps(
 def set_user_app(
     user_id: int,
     payload: AppAccessUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> list[dict[str, object]]:
@@ -573,6 +604,14 @@ def set_user_app(
         )
     db.commit()
     identity.publish(db, id_format.USER_UPDATED, user)
+    activity.record(
+        db,
+        activity.ACCOUNT,
+        f"{APP_NAMES.get(app, app)} turned {'on' if payload.enabled else 'off'}",
+        member=user,
+        by=admin,
+        request=request,
+    )
     return identity.app_access(db, user)
 
 
