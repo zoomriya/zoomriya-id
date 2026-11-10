@@ -1,0 +1,56 @@
+# ZOOMRIYA ID's CI: lint and tests for the service and the shared package, on
+# every push and pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, tests, migrations from empty
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://zoomriya_ci:ci@localhost:5432/zoomriya_id_test
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Python 3.13 and the packages
+        run: |
+          pipx install uv==0.13.4
+          uv venv --quiet --python 3.13 "$RUNNER_TEMP/venv"
+          VIRTUAL_ENV="$RUNNER_TEMP/venv" uv pip install --quiet \
+            -r backend/requirements.txt pytest==9.1.1 ruff==0.16.8 -e identity-py
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: PostgreSQL and Valkey
+        # GitHub's Ubuntu machine has PostgreSQL installed but stopped. The box
+        # runs Valkey; Ubuntu 24.04 has no Valkey package, so where it's missing
+        # the tests use Redis, which speaks the same protocol (nothing ships).
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres psql -qc "CREATE ROLE zoomriya_ci LOGIN SUPERUSER PASSWORD 'ci'"
+          sudo -u postgres createdb -O zoomriya_ci zoomriya_id_test
+          if sudo apt-get install -y --no-install-recommends valkey-server >/dev/null 2>&1; then
+            sudo systemctl start valkey-server
+          else
+            sudo apt-get install -y --no-install-recommends redis-server >/dev/null
+            sudo systemctl start redis-server
+          fi
+      - name: Lint (ruff)
+        run: |
+          ruff check identity-py
+          cd backend && ruff check app migrations tests
+      - name: Tests (pytest)
+        run: |
+          (cd identity-py && pytest -q)
+          cd backend && pytest -q

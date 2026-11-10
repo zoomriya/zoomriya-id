@@ -1,0 +1,20 @@
+# Python virtual environments
+.zrvenv/
+.venv/
+
+# Python caches and tooling artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Local data in development: the signing key and profile photos
+data/
+
+# Environment files
+.env
+.env.*
+
+# Python packaging output (identity-py)
+*.egg-info/
+build/
