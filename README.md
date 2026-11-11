@@ -77,12 +77,18 @@ copy of the database alone can't make codes; a code's time step is remembered,
 so no code works twice; backup codes are kept as hashes and each works once.
 An admin who can't sign in at all is let back in at the box: ZOOMRIYA OS's
 agent checks the box's setup code, then runs `app.recover_admin` (a new
-password, the second step cleared, signed out everywhere).
+password, the second step cleared, signed out everywhere). The setup code is
+planned to become the box phrase (*Recovery keys* in zoomriya-docs,
+`/developers/recovery/`); `app.recover_admin` doesn't change.
 
 Sign-in (including `/auth/login/new-password`, the second step and
 `/auth/me/confirm-password`) and password changes are rate-limited by address. The limit is
 controlled by `RATE_LIMIT_AUTH_REQUESTS` within
 `RATE_LIMIT_WINDOW_SECONDS` (currently 10 requests per minute).
+Planned with ZOOMRIYA Connect: 5 wrong passwords for one person lock their
+sign-in for 15 minutes, wherever they come from, and the admins' bell is
+told. Connections through ZOOMRIYA Connect carry the device they came from,
+so the limit by address applies per device.
 
 ## Run it for development
 
