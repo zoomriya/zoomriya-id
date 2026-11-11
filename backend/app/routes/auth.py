@@ -23,7 +23,7 @@ from zoomriya_identity import identity as id_format
 from zoomriya_identity import levels
 
 from app import accounts as identity
-from app import activity, avatars, second_step
+from app import activity, avatars, second_step, sign_in_lock
 from app.config import settings
 from app.db import get_db
 from app.deps import (
@@ -84,7 +84,12 @@ class TokenResponse(BaseModel):
 
 def _checked_login(db: Session, username: str, password: str, request: Request) -> User:
     user = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
-    if user is None or not verify_password(password, user.hashed_password) or not user.is_active:
+    if user is not None:
+        # Locked after too many wrong passwords: refused even with the right
+        # one, so guessing stays slow from any number of devices.
+        sign_in_lock.refuse_if_locked(user)
+    right = user is not None and verify_password(password, user.hashed_password)
+    if not right or user is None or not user.is_active:
         # Admins see wrong passwords for a member; a name that isn't one is
         # left out (never write down what someone typed by mistake).
         if user is not None:
@@ -95,7 +100,10 @@ def _checked_login(db: Session, username: str, password: str, request: Request) 
                 member=user,
                 request=request,
             )
+            if not right and sign_in_lock.wrong_password(db, user, request):
+                sign_in_lock.refuse_if_locked(user)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    sign_in_lock.right_password(db, user)
     return user
 
 

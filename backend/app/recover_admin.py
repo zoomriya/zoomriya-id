@@ -20,7 +20,7 @@ from sqlalchemy import select
 from zoomriya_identity import identity as id_format
 
 from app import accounts as identity
-from app import activity
+from app import activity, sign_in_lock
 from app.db import SessionLocal
 from app.models import ROLE_ADMIN, User
 from app.routes.users import MIN_PASSWORD_LENGTH
@@ -50,6 +50,7 @@ def recover_admin(username: str, password: str) -> bool:
         user.second_step_pending = None
         user.second_step_last = None
         user.second_step_backup = None
+        sign_in_lock.clear(user)
         # Signed out everywhere: whoever had their old password or a session is out.
         user.token_version += 1
         db.add(user)

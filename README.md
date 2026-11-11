@@ -85,10 +85,14 @@ Sign-in (including `/auth/login/new-password`, the second step and
 `/auth/me/confirm-password`) and password changes are rate-limited by address. The limit is
 controlled by `RATE_LIMIT_AUTH_REQUESTS` within
 `RATE_LIMIT_WINDOW_SECONDS` (currently 10 requests per minute).
-Planned with ZOOMRIYA Connect: 5 wrong passwords for one person lock their
-sign-in for 15 minutes, wherever they come from, and the admins' bell is
-told. Connections through ZOOMRIYA Connect carry the device they came from,
-so the limit by address applies per device.
+Five wrong passwords in a row for one person lock their sign-in for 15
+minutes, wherever they come from, even with the right password
+(`app/sign_in_lock.py`; `SIGN_IN_LOCK_TRIES`, `SIGN_IN_LOCK_MINUTES`). A wrong
+password older than that is forgotten, the right one clears the count, and an
+admin setting a new password or `app.recover_admin` lifts the lock. Each lock
+is written in the family's activity. Planned with ZOOMRIYA Connect:
+connections through it carry the device they came from, so the limit by
+address applies per device.
 
 ## Run it for development
 

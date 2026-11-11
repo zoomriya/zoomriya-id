@@ -32,7 +32,7 @@ from zoomriya_identity import identity as id_format
 from zoomriya_identity import levels, quiet_hours
 
 from app import accounts as identity
-from app import activity, avatars
+from app import activity, avatars, sign_in_lock
 from app.db import get_db
 from app.deps import get_current_user, require_admin
 from app.models import ROLE_ADMIN, ROLE_FAMILY, User
@@ -528,6 +528,8 @@ def update_user(
         user.is_active = payload.is_active
     if "password" in provided and payload.password is not None:
         user.hashed_password = hash_password(payload.password)
+        # A new password lifts a sign-in locked by wrong ones.
+        sign_in_lock.clear(user)
         # Your own is yours; someone else's is temporary unless they typed it.
         user.password_temporary = user.id != current_user.id and payload.temporary
         if user.id != current_user.id:

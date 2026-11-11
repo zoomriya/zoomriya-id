@@ -71,6 +71,17 @@ class User(TimestampMixin, Base):
     second_step_last: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # The hashes of the backup codes not used yet.
     second_step_backup: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Wrong passwords in a row (app.sign_in_lock): after SIGN_IN_LOCK_TRIES,
+    # signing in is refused until sign_in_locked_until, wherever it comes from.
+    failed_sign_ins: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_failed_sign_in: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sign_in_locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     @property
     def has_second_step(self) -> bool:

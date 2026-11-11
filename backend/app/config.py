@@ -84,6 +84,15 @@ class Settings:
     RATE_LIMIT_REFRESH_REQUESTS: int = field(
         default_factory=lambda: int(os.getenv("RATE_LIMIT_REFRESH_REQUESTS", "60"))
     )
+    #: Wrong passwords in a row for one person before their sign-in is locked,
+    #: wherever the tries come from (app.sign_in_lock).
+    SIGN_IN_LOCK_TRIES: int = field(
+        default_factory=lambda: int(os.getenv("SIGN_IN_LOCK_TRIES", "5"))
+    )
+    #: How long the lock lasts, and how long a wrong password is remembered.
+    SIGN_IN_LOCK_MINUTES: int = field(
+        default_factory=lambda: int(os.getenv("SIGN_IN_LOCK_MINUTES", "15"))
+    )
     RATE_LIMIT_WINDOW_SECONDS: int = field(
         default_factory=lambda: int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
     )
