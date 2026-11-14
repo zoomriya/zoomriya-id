@@ -246,6 +246,16 @@ def test_preferences_reject_unknown_values(account: dict[str, Any]) -> None:
         f"{API}/auth/me/preferences", headers=headers, json={"language": "xx"}
     )
     assert bad_language.status_code == 400
+
+    # English and French only for now: French is kept, the box's hidden languages refused.
+    french = client.patch(f"{API}/auth/me/preferences", headers=headers, json={"language": "fr"})
+    assert french.status_code == 200
+    assert french.json()["preferences"]["language"] == "fr"
+    for hidden in ("de", "es", "ta", "ja", "zh_CN"):
+        refused = client.patch(
+            f"{API}/auth/me/preferences", headers=headers, json={"language": hidden}
+        )
+        assert refused.status_code == 400
     assert client.patch(f"{API}/auth/me/preferences", json={"theme": "skylight"}).status_code == 401
 
 

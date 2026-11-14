@@ -47,7 +47,10 @@ MIN_PASSWORD_LENGTH = 8
 
 # Must match the themes the apps offer (packages/ui/src/types/theme.ts).
 THEMES = frozenset({"daylight", "midnight", "nightshade", "fjord", "graphite", "skylight", "linen"})
-LANGUAGES = frozenset({"en"})
+# The languages a member may choose: English and French for now, as on the
+# box (ZOOMRIYA OS, box-desktop.md §5, decided 13 November 2026). The others
+# come one at a time, after a native speaker's check.
+LANGUAGES = frozenset({"en", "fr"})
 DEFAULT_LANGUAGE = "en"
 
 router = APIRouter()
