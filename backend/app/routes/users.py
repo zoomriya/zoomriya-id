@@ -232,6 +232,7 @@ APP_NAMES = {
     "chat": "Family Chat",
     "tracker": "Family Tracker",
     "planner": "Family Planner",
+    "health": "Family Health",
     "inbox": "Family Inbox",
     "myira": "Myira",
 }
