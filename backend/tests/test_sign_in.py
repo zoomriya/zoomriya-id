@@ -658,3 +658,24 @@ def test_identity_events_also_wait_on_the_stream(make_user, identity_events) -> 
     assert client.xlen(stream) == before + 1
     [(_, fields)] = client.xrevrange(stream, count=1)
     assert json.loads(fields[b"data"]) == identity_events(signed=True)[-1]
+
+
+def test_a_name_that_is_nobody_s_is_checked_as_slowly_as_a_real_one(monkeypatch) -> None:
+    """The slow password hash runs for an unknown name too, so how long the
+    answer takes doesn't tell which names exist."""
+    from app.routes import auth
+
+    checked: list[str] = []
+    real = auth.verify_password
+
+    def counting(password: str, hashed: str) -> bool:
+        checked.append(hashed)
+        return real(password, hashed)
+
+    monkeypatch.setattr(auth, "verify_password", counting)
+    with _client() as client:
+        response = client.post(
+            f"{API}/auth/login", json={"username": "nobody-of-that-name", "password": "whatever"}
+        )
+    assert response.status_code == 401 and response.json() == {"detail": "Invalid credentials"}
+    assert len(checked) == 1 and checked[0].startswith("$argon2id$")

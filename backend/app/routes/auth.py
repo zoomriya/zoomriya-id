@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, datetime, timedelta
+from functools import cache
 
 import jwt
 from fastapi import (
@@ -85,13 +87,23 @@ class TokenResponse(BaseModel):
     expires_in: int
 
 
+@cache
+def _no_one() -> str:
+    """A hash no password matches, made once, to check a name that isn't
+    anyone's against."""
+    return hash_password(secrets.token_urlsafe(32))
+
+
 def _checked_login(db: Session, username: str, password: str, request: Request) -> User:
     user = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
     if user is not None:
         # Locked after too many wrong passwords: refused even with the right
         # one, so guessing stays slow from any number of devices.
         sign_in_lock.refuse_if_locked(user)
-    right = user is not None and verify_password(password, user.hashed_password)
+    # A name that isn't anyone's takes as long as a wrong password for one
+    # that is (the same slow hash), so the wait doesn't tell which names exist.
+    checked = verify_password(password, user.hashed_password if user is not None else _no_one())
+    right = user is not None and checked
     if not right or user is None or not user.is_active:
         # Admins see wrong passwords for a member; a name that isn't one is
         # left out (never write down what someone typed by mistake).
