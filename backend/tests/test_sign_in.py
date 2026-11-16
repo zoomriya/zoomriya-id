@@ -107,12 +107,58 @@ def test_login_cookies_are_httponly_and_site_wide(make_user) -> None:
         response = client.post(
             f"{API}/auth/login", json={"username": make_user().username, "password": TEST_PASSWORD}
         )
-    cookies = _set_cookie_headers(response)
-    for name in (id_format.AUTH_COOKIE_NAME, id_format.SESSION_COOKIE_NAME):
-        header = cookies[name].lower()
-        assert "httponly" in header and "path=/" in header and "samesite=lax" in header
+    headers = [h.lower() for h in response.headers.get_list("set-cookie")]
+    assert any(h.startswith(id_format.AUTH_COOKIE_NAME) and "path=/;" in h for h in headers)
+    for header in headers:
+        assert "httponly" in header and "samesite=lax" in header
         # Plain HTTP (a developer's machine): not Secure, or the browser drops it.
         assert "secure" not in header
+
+
+def _session_cookies(response) -> dict[str, str]:
+    """The session cookie's Set-Cookie headers, by their path."""
+    found = {}
+    for header in response.headers.get_list("set-cookie"):
+        if header.startswith(id_format.SESSION_COOKIE_NAME + "="):
+            path = next(p for p in header.split("; ") if p.lower().startswith("path="))
+            found[path.split("=", 1)[1]] = header
+    return found
+
+
+def test_the_session_cookie_goes_to_zoomriya_id_only(make_user) -> None:
+    """It renews tokens for every app for 30 days: no app's server is sent it."""
+    with _client() as client:
+        response = client.post(
+            f"{API}/auth/login", json={"username": make_user().username, "password": TEST_PASSWORD}
+        )
+        kept = [c for c in client.cookies.jar if c.name == id_format.SESSION_COOKIE_NAME]
+        assert [c.path for c in kept] == [f"{API}/auth"]
+        # Renewing and signing out are both inside that path.
+        assert client.post(f"{API}/auth/refresh").status_code == 200
+    session = _session_cookies(response)
+    assert "Max-Age=0" not in session[f"{API}/auth"]
+    # One from before, sent to every app, is taken away.
+    assert "Max-Age=0" in session["/"]
+
+
+def test_a_session_cookie_from_before_moves_to_its_own_path(make_user) -> None:
+    """Signed in before the cookie had a path of its own: the next renewal
+    moves it, with nobody signing in again."""
+    with _client() as client:
+        client.post(
+            f"{API}/auth/login", json={"username": make_user().username, "password": TEST_PASSWORD}
+        )
+        held = next(c for c in client.cookies.jar if c.name == id_format.SESSION_COOKIE_NAME)
+        value = held.value
+        client.cookies.clear()
+        client.cookies.set(id_format.SESSION_COOKIE_NAME, value, domain=held.domain, path="/")
+        response = client.post(f"{API}/auth/refresh")
+        assert response.status_code == 200
+        kept = [c for c in client.cookies.jar if c.name == id_format.SESSION_COOKIE_NAME]
+        assert [(c.path, c.value) for c in kept] == [(f"{API}/auth", value)]
+        assert client.post(f"{API}/auth/refresh").status_code == 200
+    moved = _session_cookies(response)
+    assert "Max-Age=0" in moved["/"] and f"={value};" in moved[f"{API}/auth"]
 
 
 def test_login_cookies_over_https_are_secure(make_user) -> None:

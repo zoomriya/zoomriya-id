@@ -287,3 +287,71 @@ def test_an_admin_is_let_back_in_at_the_box(make_user) -> None:
             f"{API}/auth/login", json={"username": admin.username, "password": "a new long one"}
         )
         assert answer.json()["code"] == "second_step_setup_needed"
+
+
+# --- wrong codes count toward the person's sign-in lock --------------------------
+
+
+def _wrong_code(secret: str) -> str:
+    """Six digits that aren't the code now, nor one step either side."""
+    now = int(time.time() // 30)
+    right = {second_step._code_at(secret, step) for step in range(now - 2, now + 3)}
+    return next(
+        code
+        for code in ("000000", "111111", "222222", "333333", "444444", "555555")
+        if code not in right
+    )
+
+
+def _try_code(client: TestClient, ticket: str, code: str):
+    return client.post(f"{API}/auth/login/second-step", json={"ticket": ticket, "code": code})
+
+
+def test_five_wrong_codes_lock_the_sign_in(make_user) -> None:
+    """Someone with the password can't keep guessing codes: the fifth wrong one
+    locks the person's sign-in, for the right code and the password too."""
+    user = make_user()
+    with _client() as client:
+        secret, _, _ = _set_up(client, user)
+        ticket = _login(client, user).json()["ticket"]
+        wrong = _wrong_code(secret)
+        for _ in range(4):
+            assert _try_code(client, ticket, wrong).status_code == 400
+        fifth = _try_code(client, ticket, wrong)
+        assert fifth.status_code == 429
+        assert "Too many wrong codes" in fifth.json()["detail"]
+        assert 0 < int(fifth.headers["Retry-After"]) <= 15 * 60
+        right = second_step._code_at(secret, int(time.time() // 30) + 1)
+        assert _try_code(client, ticket, right).status_code == 429
+        assert _login(client, user).status_code == 429
+
+
+def test_the_password_again_does_not_forget_wrong_codes(make_user) -> None:
+    """Asking for a new ticket (the right password) between wrong codes must
+    not start the count again, or codes could be guessed without end."""
+    user = make_user()
+    with _client() as client:
+        secret, _, _ = _set_up(client, user)
+        wrong = _wrong_code(secret)
+        for _ in range(4):
+            ticket = _login(client, user).json()["ticket"]
+            assert _try_code(client, ticket, wrong).status_code == 400
+        ticket = _login(client, user).json()["ticket"]
+        assert _try_code(client, ticket, wrong).status_code == 429
+
+
+def test_the_right_code_forgets_wrong_ones(make_user) -> None:
+    user = make_user()
+    with _client() as client:
+        secret, _, _ = _set_up(client, user)
+        ticket = _login(client, user).json()["ticket"]
+        for _ in range(4):
+            assert _try_code(client, ticket, _wrong_code(secret)).status_code == 400
+        right = second_step._code_at(secret, int(time.time() // 30) + 1)
+        assert _try_code(client, ticket, right).status_code == 200
+    db = SessionLocal()
+    try:
+        row = db.get(User, user.id)
+        assert row.failed_sign_ins == 0 and row.sign_in_locked_until is None
+    finally:
+        db.close()

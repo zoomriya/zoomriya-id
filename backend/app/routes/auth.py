@@ -106,7 +106,11 @@ def _checked_login(db: Session, username: str, password: str, request: Request) 
             if not right and sign_in_lock.wrong_password(db, user, request):
                 sign_in_lock.refuse_if_locked(user)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    sign_in_lock.right_password(db, user)
+    if not user.has_second_step:
+        # With a second step, the count clears at the right code instead
+        # (routes.second_step): otherwise each right password would wipe the
+        # wrong codes counted so far, and codes could be guessed without end.
+        sign_in_lock.right_password(db, user)
     return user
 
 
@@ -198,9 +202,10 @@ def _issue_token(
 ) -> TokenResponse:
     """A fresh access token, in the body and in the shared cookie.
 
-    Both cookies are HttpOnly with ``Path=/``, so they reach every app behind
-    the gateway while page scripts can't read them. The page keeps the body's
-    token and sends it as ``Authorization: Bearer``.
+    Both cookies are HttpOnly, so page scripts can't read them. The access
+    token's has ``Path=/``, so it reaches every app behind the gateway; the
+    page also keeps the body's token and sends it as ``Authorization:
+    Bearer``. The session's goes to ZOOMRIYA ID alone (``SESSION_COOKIE_PATH``).
     """
     lifetime = settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
     token = create_access_token(
@@ -212,13 +217,18 @@ def _issue_token(
     _set_cookie(response, AUTH_COOKIE_NAME, token, lifetime)
     if new_session:
         session = create_session_token(user.id, user.token_version)
-        _set_cookie(
-            response, SESSION_COOKIE_NAME, session, settings.JWT_SESSION_EXPIRE_DAYS * 86400
-        )
+        _set_session_cookie(response, session, settings.JWT_SESSION_EXPIRE_DAYS * 86400)
     return TokenResponse(access_token=token, expires_in=lifetime)
 
 
-def _set_cookie(response: Response, name: str, value: str, max_age: int) -> None:
+#: Where the browser sends the session cookie: ZOOMRIYA ID's sign-in routes
+#: (``/auth/refresh``, ``/auth/logout``) and nowhere else. It renews tokens
+#: for every app for 30 days, so no app's server may ever be handed it; the
+#: apps get the 15-minute access token only.
+SESSION_COOKIE_PATH = f"{settings.api_prefix}/auth"
+
+
+def _set_cookie(response: Response, name: str, value: str, max_age: int, path: str = "/") -> None:
     response.set_cookie(
         key=name,
         value=value,
@@ -226,28 +236,42 @@ def _set_cookie(response: Response, name: str, value: str, max_age: int) -> None
         httponly=True,
         secure=settings.AUTH_COOKIE_SECURE,
         samesite="lax",
-        path="/",
+        path=path,
     )
 
 
+def _delete_cookie(response: Response, name: str, path: str = "/") -> None:
+    response.delete_cookie(
+        key=name, path=path, secure=settings.AUTH_COOKIE_SECURE, httponly=True, samesite="lax"
+    )
+
+
+def _set_session_cookie(response: Response, session: str, max_age: int) -> None:
+    """The session cookie, for ZOOMRIYA ID's sign-in routes only. One from
+    before, which every app was sent (``Path=/``), is taken away."""
+    _set_cookie(response, SESSION_COOKIE_NAME, session, max_age, SESSION_COOKIE_PATH)
+    _delete_cookie(response, SESSION_COOKIE_NAME)
+
+
 def _clear_cookies(response: Response) -> None:
-    for name in (AUTH_COOKIE_NAME, SESSION_COOKIE_NAME):
-        response.delete_cookie(
-            key=name, path="/", secure=settings.AUTH_COOKIE_SECURE, httponly=True, samesite="lax"
-        )
+    _delete_cookie(response, AUTH_COOKIE_NAME)
+    _delete_cookie(response, SESSION_COOKIE_NAME, SESSION_COOKIE_PATH)
+    # And a session cookie from before it had its own path.
+    _delete_cookie(response, SESSION_COOKIE_NAME)
 
 
-def _session_user(db: Session, token: str) -> User | None:
-    """The member a still-valid session belongs to."""
+def _session_user(db: Session, token: str) -> tuple[User, int] | None:
+    """The member a still-valid session belongs to, and the seconds it has left."""
     try:
         claims = decode_session_token(token)
         user = db.get(User, int(claims["sub"]))
         version = int(claims.get("ver", 0))
+        left = int(claims["exp"]) - int(datetime.now(UTC).timestamp())
     except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
         return None
     if user is None or not user.is_active or user.token_version != version:
         return None
-    return user
+    return user, max(left, 1)
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -264,8 +288,13 @@ def refresh(
     """
     session = request.cookies.get(SESSION_COOKIE_NAME)
     if session:
-        user = _session_user(db, session)
-        if user is not None:
+        found = _session_user(db, session)
+        if found is not None:
+            user, seconds_left = found
+            # The same session, for as long as it had left, at its own path:
+            # a browser signed in before the cookie had one moves over here,
+            # with nobody signing in again.
+            _set_session_cookie(response, session, seconds_left)
             return _issue_token(response, user, db)
 
     # Returned, not raised: a raised error drops the injected response, and

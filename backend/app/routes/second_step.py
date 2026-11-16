@@ -23,7 +23,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import activity, second_step
+from app import activity, second_step, sign_in_lock
 from app.db import get_db
 from app.deps import bearer_scheme, get_current_user, require_admin
 from app.models import ROLE_ADMIN, User
@@ -119,16 +119,22 @@ def login_second_step(
     response: Response,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
-    """The second step after the password. Rate-limited with ``/auth/login``."""
+    """The second step after the password. Rate-limited with ``/auth/login``
+    per address, and wrong codes count toward the person's sign-in lock
+    (app.sign_in_lock), so codes can't be guessed from many addresses."""
     user = _ticket_user(db, payload.ticket, second_step.CHECK)
+    sign_in_lock.refuse_if_locked(user, what="codes")
     backups_before = len(user.second_step_backup or [])
     if not _code_ok(user, payload.code):
         activity.record(
             db, activity.SIGN_IN_FAILED, "Wrong second-step code", member=user, request=request
         )
+        if sign_in_lock.wrong_password(db, user, request, what="codes"):
+            sign_in_lock.refuse_if_locked(user, what="codes")
         # 400, not 401: the page keeps the ticket and asks again; 401 means
         # the ticket ran out and signing in starts again.
         raise HTTPException(status_code=400, detail=WRONG_CODE)
+    sign_in_lock.clear(user)
     db.add(user)
     db.commit()
     db.refresh(user)
