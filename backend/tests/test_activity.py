@@ -105,3 +105,18 @@ def test_only_admins_read_it(make_user) -> None:
     with closing(TestClient(app)) as client:
         answer = client.get(f"{API}/users/activity", headers=auth_headers(member))
     assert answer.status_code == 403
+
+
+def test_a_restore_from_a_backup_is_written_down(make_user) -> None:
+    """The agent's line once the accounts are back: every admin reads it."""
+    from app.restored import main
+
+    admin = make_user(role="admin")
+    assert main(["--date", "14 November 2026", "--by", "priya"]) == 0
+    with closing(TestClient(app)) as client:
+        lines = _lines(client, admin)
+    assert any(
+        line["what"] == "This box was restored from the backup of 14 November 2026 by priya"
+        and line["source"] == "The box"
+        for line in lines
+    )

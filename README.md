@@ -65,7 +65,9 @@ ZOOMRIYA ID stores account and app-access information in the `zoomriya_id`
 database. Its signing keys and profile photos live in
 `/data/zoomriya-id/keys/` and `/data/zoomriya-id/avatars/`. The directory is
 readable only by the `zoomriya-id` service account. Both the database and
-directory are included in backups, as specified in `deploy/backup.conf`.
+directory are in every backup: on ZOOMRIYA OS, the box's own backup seals
+them onto the backup drive with the backup key; elsewhere,
+`deploy/backup.conf` declares them.
 
 `mcp` (a member's own AI apps) is the one app that is off until an admin
 turns it on for a member, and it is never on for a child's account.
@@ -80,6 +82,13 @@ agent checks the box's setup code, then runs `app.recover_admin` (a new
 password, the second step cleared, signed out everywhere). The setup code is
 planned to become the box phrase (*Recovery keys* in zoomriya-docs,
 `/developers/recovery/`); `app.recover_admin` doesn't change.
+
+When a backup is brought back on ZOOMRIYA OS, every account comes back as it
+was: passwords, second steps and signed-in devices. An admin who forgot their
+old password can name their account and a new one at the same time; the
+backup key stands in for the setup code, and the agent runs
+`app.recover_admin`. It then runs `app.restored`, which writes "This box was
+restored from the backup of … by …" in the family's activity.
 
 Sign-in (including `/auth/login/new-password`, the second step and
 `/auth/me/confirm-password`) and password changes are rate-limited by address. The limit is
