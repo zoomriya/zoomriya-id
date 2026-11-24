@@ -1,0 +1,27 @@
+[project]
+name = "zoomriya-id"
+version = "0.1.0"
+description = "ZOOMRIYA ID: the one sign-in every ZOOMRIYA app shares"
+requires-python = ">=3.13"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = [
+    # Third-party: starlette's TestClient still references an anyio alias
+    # deprecated in anyio 4.15. Remove once starlette stops using it.
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# B008: FastAPI's Depends(...)/File(...) in parameter defaults is the framework's own idiom.
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"migrations/*" = ["E501"]
+"tests/*" = ["E501"]
